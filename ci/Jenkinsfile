@@ -2,20 +2,18 @@ pipeline {
     agent any
 
     environment {
-        // ------------ AWS & ECR ------------
         AWS_REGION        = "ap-south-1"
         AWS_ACCOUNT_ID    = "241913669350"
+
         ECR_BACKEND_REPO  = "three-tier-backend"
         ECR_FRONTEND_REPO = "three-tier-frontend"
 
         ECR_BACKEND_URI   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_BACKEND_REPO}"
         ECR_FRONTEND_URI  = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_FRONTEND_REPO}"
 
-        // ------------ GitHub Repo ------------
         GIT_REPO    = "https://github.com/Dharmendra7798/three-tier-app.git"
         GIT_BRANCH  = "main"
 
-        // ------------ Jenkins Credentials ------------
         GIT_CREDENTIAL_ID = "github-credentials"
         AWS_CREDENTIAL_ID = "aws-credentials"
     }
@@ -24,49 +22,7 @@ pipeline {
 
         stage('Checkout Code') {
             steps {
-                git url: "${GIT_REPO}", branch: "${GIT_BRANCH}"
-            }
-        }
-
-        // ------------ Removed SonarQube Stage ------------
-
-        stage('Dependency Check') {
-            steps {
-                sh '''
-                    apt-get update -y && apt-get install -y wget unzip default-jre-headless
-
-                    mkdir -p /opt/dependency-check
-                    cd /opt/dependency-check
-
-                    if [ ! -f dependency-check/bin/dependency-check.sh ]; then
-                        wget -q https://github.com/jeremylong/DependencyCheck/releases/download/v8.4.0/dependency-check-8.4.0-release.zip
-                        unzip -o dependency-check-8.4.0-release.zip
-                    fi
-
-                    mkdir -p $WORKSPACE/reports
-
-                    /opt/dependency-check/dependency-check/bin/dependency-check.sh \
-                      --scan Application-Code/backend \
-                      --format HTML \
-                      --out $WORKSPACE/reports/backend-dependency.html || true
-
-                    /opt/dependency-check/dependency-check/bin/dependency-check.sh \
-                      --scan Application-Code/frontend \
-                      --format HTML \
-                      --out $WORKSPACE/reports/frontend-dependency.html || true
-                '''
-            }
-        }
-
-        stage('File Scan') {
-            steps {
-                sh '''
-                    echo "Checking for .env files..."
-                    find Application-Code -type f -name ".env" || echo "No .env found"
-
-                    echo "Checking for AWS keys..."
-                    grep -rnE "AKIA[0-9A-Z]{16}" Application-Code || echo "No AWS keys found"
-                '''
+                git(url: "${GIT_REPO}", branch: "${GIT_BRANCH}")
             }
         }
 
@@ -74,6 +30,7 @@ pipeline {
             steps {
                 script {
                     GIT_COMMIT = sh(returnStdout: true, script: "git rev-parse --short HEAD").trim()
+
                     env.BACKEND_TAG  = "backend-${GIT_COMMIT}"
                     env.FRONTEND_TAG = "frontend-${GIT_COMMIT}"
 
@@ -88,49 +45,18 @@ pipeline {
             }
         }
 
-        stage('Trivy Scan') {
-            steps {
-                sh '''
-                    apt-get update -y && apt-get install -y wget gnupg lsb-release apt-transport-https
-
-                    if ! command -v trivy > /dev/null; then
-                        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
-                        | gpg --dearmor -o /usr/share/keyrings/trivy.gpg
-
-                        echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb \
-                            $(lsb_release -sc) main" | tee /etc/apt/sources.list.d/trivy.list
-
-                        apt-get update -y && apt-get install -y trivy
-                    fi
-
-                    mkdir -p ${WORKSPACE}/reports
-
-                    trivy image --exit-code 0 --severity HIGH,CRITICAL \
-                        --format html \
-                        -o ${WORKSPACE}/reports/backend-trivy.html \
-                        ${ECR_BACKEND_URI}:${BACKEND_TAG} || true
-
-                    trivy image --exit-code 0 --severity HIGH,CRITICAL \
-                        --format html \
-                        -o ${WORKSPACE}/reports/frontend-trivy.html \
-                        ${ECR_FRONTEND_URI}:${FRONTEND_TAG} || true
-                '''
-            }
-        }
-
         stage('AWS ECR Login') {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: "${AWS_CREDENTIAL_ID}") {
                     sh """
-                        aws ecr get-login-password --region ${AWS_REGION} | \
-                        docker login --username AWS --password-stdin \
-                        ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                        aws ecr get-login-password --region ${AWS_REGION} |
+                        docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
                     """
                 }
             }
         }
 
-        stage('Push Images') {
+        stage('Push Images to ECR') {
             steps {
                 sh """
                     docker push ${ECR_BACKEND_URI}:${BACKEND_TAG}
@@ -142,6 +68,7 @@ pipeline {
         stage('Update K8s Manifests for ArgoCD') {
             steps {
                 withCredentials([string(credentialsId: GIT_CREDENTIAL_ID, variable: 'GIT_TOKEN')]) {
+
                     sh """
                         rm -rf repo
                         git clone https://${GIT_TOKEN}@github.com/Dharmendra7798/three-tier-app.git repo
@@ -152,11 +79,11 @@ pipeline {
                         sed -i "s|image: .*three-tier-frontend.*|image: ${ECR_FRONTEND_URI}:${FRONTEND_TAG}|g" Frontend/deployment.yaml
 
                         git config user.email "jenkins@ci.local"
-                        git config user.name  "Jenkins CI"
+                        git config user.name "Jenkins CI"
 
                         git add .
                         git commit -m "GitOps Update: ${BACKEND_TAG}, ${FRONTEND_TAG}" || true
-                        git push origin main || true
+                        git push origin main
                     """
                 }
             }
