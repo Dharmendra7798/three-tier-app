@@ -16,8 +16,8 @@ pipeline {
         GIT_BRANCH  = "main"
 
         // ------------ Jenkins Credentials ------------
-        GIT_CREDENTIAL_ID = "github-token"
-        AWS_CREDENTIAL_ID = "aws-credentials"
+        GIT_CREDENTIAL_ID = "github-credentials"  // FIXED
+        AWS_CREDENTIAL_ID = "aws-credentials"     // FIXED
 
         // ------------ SonarQube ------------
         SONARQUBE_SERVER  = "SonarQubeServer"
@@ -26,23 +26,16 @@ pipeline {
 
     stages {
 
-        // ============================
-        // 1. CHECKOUT CODE
-        // ============================
         stage('Checkout Code') {
             steps {
                 git(url: "${GIT_REPO}", branch: "${GIT_BRANCH}")
             }
         }
 
-        // ============================
-        // 2. CODE QUALITY (SONARQUBE)
-        // ============================
         stage('SonarQube Analysis') {
             steps {
                 script {
                     echo "Running SonarQube Analysis..."
-                    
                     def scannerHome = tool SONARQUBE_SCANNER
 
                     withSonarQubeEnv("${SONARQUBE_SERVER}") {
@@ -64,55 +57,46 @@ pipeline {
             }
         }
 
-        // ============================
-        // 3. OWASP DEPENDENCY CHECK
-        // ============================
         stage('Dependency Check') {
             steps {
                 sh '''
                     apt-get update -y && apt-get install -y wget unzip default-jre-headless
 
                     mkdir -p /opt/dependency-check
-
                     cd /opt/dependency-check
+
                     if [ ! -f dependency-check/bin/dependency-check.sh ]; then
-                       wget -q https://github.com/jeremylong/DependencyCheck/releases/download/v8.4.0/dependency-check-8.4.0-release.zip
-                       unzip -o dependency-check-8.4.0-release.zip
+                        wget -q https://github.com/jeremylong/DependencyCheck/releases/download/v8.4.0/dependency-check-8.4.0-release.zip
+                        unzip -o dependency-check-8.4.0-release.zip
                     fi
 
                     mkdir -p $WORKSPACE/reports
-                    
-                    /opt/dependency-check/dependency-check/bin/dependency-check.sh \
-                      --scan Application-Code/backend \
-                      --format HTML \
-                      --out $WORKSPACE/reports/backend-dependency-report.html || true
 
                     /opt/dependency-check/dependency-check/bin/dependency-check.sh \
-                      --scan Application-Code/frontend \
-                      --format HTML \
-                      --out $WORKSPACE/reports/frontend-dependency-report.html || true
+                        --scan Application-Code/backend \
+                        --format HTML \
+                        --out $WORKSPACE/reports/backend-dependency.html || true
+
+                    /opt/dependency-check/dependency-check/bin/dependency-check.sh \
+                        --scan Application-Code/frontend \
+                        --format HTML \
+                        --out $WORKSPACE/reports/frontend-dependency.html || true
                 '''
             }
         }
 
-        // ============================
-        // 4. SECURITY FILE SCAN
-        // ============================
         stage('File Scan') {
             steps {
                 sh '''
-                    echo "Searching for .env files..."
+                    echo "Checking for .env files..."
                     find Application-Code -type f -name ".env" || echo "No .env found"
 
-                    echo "Searching for AWS access keys..."
+                    echo "Checking for AWS keys..."
                     grep -rnE "AKIA[0-9A-Z]{16}" Application-Code || echo "No AWS keys found"
                 '''
             }
         }
 
-        // ============================
-        // 5. BUILD DOCKER IMAGES
-        // ============================
         stage('Build Docker Images') {
             steps {
                 script {
@@ -131,17 +115,14 @@ pipeline {
             }
         }
 
-        // ============================
-        // 6. TRIVY IMAGE SCAN
-        // ============================
-        stage('Image Vulnerability Scan (Trivy)') {
+        stage('Trivy Scan') {
             steps {
                 sh '''
                     apt-get update -y && apt-get install -y wget gnupg lsb-release apt-transport-https
 
                     if ! command -v trivy > /dev/null; then
-                        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | \
-                        gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+                        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+                        | gpg --dearmor -o /usr/share/keyrings/trivy.gpg
 
                         echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb \
                         $(lsb_release -sc) main" | tee /etc/apt/sources.list.d/trivy.list
@@ -152,19 +133,18 @@ pipeline {
                     mkdir -p ${WORKSPACE}/reports
 
                     trivy image --exit-code 0 --severity HIGH,CRITICAL \
-                      --format html -o reports/backend-trivy.html \
-                      ${ECR_BACKEND_URI}:${BACKEND_TAG} || true
+                        --format html \
+                        -o ${WORKSPACE}/reports/backend-trivy.html \
+                        ${ECR_BACKEND_URI}:${BACKEND_TAG} || true
 
                     trivy image --exit-code 0 --severity HIGH,CRITICAL \
-                      --format html -o reports/frontend-trivy.html \
-                      ${ECR_FRONTEND_URI}:${FRONTEND_TAG} || true
+                        --format html \
+                        -o ${WORKSPACE}/reports/frontend-trivy.html \
+                        ${ECR_FRONTEND_URI}:${FRONTEND_TAG} || true
                 '''
             }
         }
 
-        // ============================
-        // 7. LOGIN TO ECR
-        // ============================
         stage('AWS ECR Login') {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: "${AWS_CREDENTIAL_ID}") {
@@ -176,9 +156,6 @@ pipeline {
             }
         }
 
-        // ============================
-        // 8. PUSH IMAGES TO ECR
-        // ============================
         stage('Push Images') {
             steps {
                 sh """
@@ -188,13 +165,9 @@ pipeline {
             }
         }
 
-        // ============================
-        // 9. UPDATE K8s MANIFESTS (GITOPS FOR ARGOCD)
-        // ============================
-        stage('Update Manifests For ArgoCD') {
+        stage('Update K8s Manifests for ArgoCD') {
             steps {
                 withCredentials([string(credentialsId: GIT_CREDENTIAL_ID, variable: 'GIT_TOKEN')]) {
-
                     sh """
                         rm -rf repo
                         git clone https://${GIT_TOKEN}@github.com/Dharmendra7798/three-tier-app.git repo
