@@ -5,18 +5,23 @@ metadata:
   namespace: argocd
 spec:
   project: default
+
   source:
-    repoURL: 'https://github.com/Dharmendra7798/Dharmendra_CapstoneProject.git'
+    repoURL: 'https://github.com/Dharmendra7798/three-tier-app.git'
     targetRevision: main
-    path: 'k8s'
+    path: 'Kubernetes-Manifests-file'
     directory:
       recurse: true
+
   destination:
     server: 'https://kubernetes.default.svc'
-    namespace: three-tier   # ✅ FIXED
+    namespace: three-tier
+
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
-      - CreateNamespace=true   # ✅ ENSURE NAMESPACE CREATED
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+
