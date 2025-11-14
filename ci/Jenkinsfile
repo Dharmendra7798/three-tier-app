@@ -16,8 +16,8 @@ pipeline {
         GIT_BRANCH  = "main"
 
         // ------------ Jenkins Credentials ------------
-        GIT_CREDENTIAL_ID = "github-credentials"  // FIXED
-        AWS_CREDENTIAL_ID = "aws-credentials"     // FIXED
+        GIT_CREDENTIAL_ID = "github-credentials"
+        AWS_CREDENTIAL_ID = "aws-credentials"
 
         // ------------ SonarQube ------------
         SONARQUBE_SERVER  = "SonarQubeServer"
@@ -28,7 +28,11 @@ pipeline {
 
         stage('Checkout Code') {
             steps {
-                git(url: "${GIT_REPO}", branch: "${GIT_BRANCH}")
+                git(
+                    url: "${GIT_REPO}",
+                    branch: "${GIT_BRANCH}",
+                    credentialsId: "${GIT_CREDENTIAL_ID}"
+                )
             }
         }
 
