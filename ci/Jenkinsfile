@@ -1,0 +1,163 @@
+pipeline {
+    agent any
+
+    environment {
+        // Docker Hub credentials (configured in Jenkins → Manage Credentials)
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
+
+        // Docker repositories
+        FRONTEND_REPO = 'kishan7798/frontend-app'
+        BACKEND_REPO  = 'kishan7798/backend-app'
+
+        // SonarQube configuration
+        SONARQUBE_SERVER  = "SonarQubeServer"
+        SONARQUBE_SCANNER = "SonarQubeScanner"
+
+        // SonarQube token
+        SONARQUBE_TOKEN = credentials('sonarqube-auth-token')
+
+        // Docker daemon URL for Jenkins container
+        DOCKER_HOST = "tcp://host.docker.internal:2375"
+    }
+
+    stages {
+
+        stage('Checkout Code') {
+            steps {
+                git branch: 'main', url: 'https://github.com/Dharmendra7798/Dharmendra_CapstoneProject.git'
+            }
+        }
+
+        stage('Code Quality Analysis (SonarQube)') {
+            steps {
+                script {
+                    echo "🔎 Running SonarQube Code Analysis..."
+                    def scannerHome = tool name: "${SONARQUBE_SCANNER}", type: 'hudson.plugins.sonar.SonarRunnerInstallation'
+
+                    withSonarQubeEnv("${SONARQUBE_SERVER}") {
+                        sh """
+                            cd ${WORKSPACE}/Application-Code/backend
+                            ${scannerHome}/bin/sonar-scanner \
+                                -Dsonar.projectKey=backend \
+                                -Dsonar.sources=. \
+                                -Dsonar.host.url=http://192.168.0.105:9000 \
+                                -Dsonar.login=${SONARQUBE_TOKEN} \
+                                -Dsonar.projectName="Backend Analysis"
+
+                            cd ${WORKSPACE}/Application-Code/frontend
+                            ${scannerHome}/bin/sonar-scanner \
+                                -Dsonar.projectKey=frontend \
+                                -Dsonar.sources=. \
+                                -Dsonar.host.url=http://192.168.0.105:9000 \
+                                -Dsonar.login=${SONARQUBE_TOKEN} \
+                                -Dsonar.projectName="Frontend Analysis"
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('File Scan') {
+            steps {
+                sh '''
+                    echo "Checking for .env files..."
+                    find Application-Code -type f -name ".env" || echo "No .env files found."
+
+                    echo "Checking for AWS access keys..."
+                    grep -rnE "AKIA[0-9A-Z]{16}" Application-Code || echo "No AWS keys found."
+                '''
+            }
+        }
+
+        stage('Build Docker Images') {
+            steps {
+                script {
+                    def GIT_COMMIT = sh(returnStdout: true, script: "git rev-parse --short HEAD").trim()
+                    env.BACKEND_TAG  = "${BACKEND_REPO}:${GIT_COMMIT}"
+                    env.FRONTEND_TAG = "${FRONTEND_REPO}:${GIT_COMMIT}"
+
+                    echo "🐳 Building Docker images using Docker Desktop..."
+                    sh """
+                        cd ${WORKSPACE}/Application-Code/backend
+                        docker -H ${DOCKER_HOST} build -t ${BACKEND_TAG} .
+
+                        cd ${WORKSPACE}/Application-Code/frontend
+                        docker -H ${DOCKER_HOST} build -t ${FRONTEND_TAG} .
+                    """
+                }
+            }
+        }
+
+        stage('Image Vulnerability Scan (Trivy)') {
+            steps {
+                script {
+                    echo "🛡️ Running Trivy scan..."
+                    sh '''
+                        if ! command -v trivy > /dev/null; then
+                            sudo apt-get update -y
+                            sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+                            wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+                            echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
+                            sudo apt-get update -y && sudo apt-get install -y trivy
+                        fi
+
+                        mkdir -p ${WORKSPACE}/reports
+
+                        echo "Scanning backend image..."
+                        trivy image --format json -o ${WORKSPACE}/reports/backend-trivy-report.json ${BACKEND_TAG} || true
+
+                        echo "Scanning frontend image..."
+                        trivy image --format json -o ${WORKSPACE}/reports/frontend-trivy-report.json ${FRONTEND_TAG} || true
+                    '''
+                }
+            }
+        }
+
+        stage('Login to Docker Hub') {
+            steps {
+                sh """
+                    echo \$DOCKERHUB_CREDENTIALS_PSW | docker -H ${DOCKER_HOST} login -u \$DOCKERHUB_CREDENTIALS_USR --password-stdin
+                """
+            }
+        }
+
+        stage('Push Docker Images to Docker Hub') {
+            steps {
+                sh """
+                    docker -H ${DOCKER_HOST} push ${BACKEND_TAG}
+                    docker -H ${DOCKER_HOST} push ${FRONTEND_TAG}
+                """
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh '''
+                    echo "🚀 Deploying to EKS..."
+                    kubectl apply -f ${WORKSPACE}/k8s/apps/backend/backend-deployment.yaml
+                    kubectl apply -f ${WORKSPACE}/k8s/apps/backend/backend-service.yaml
+                    kubectl apply -f ${WORKSPACE}/k8s/apps/frontend/frontend-deployment.yaml
+                    kubectl apply -f ${WORKSPACE}/k8s/apps/frontend/frontend-service.yaml
+                '''
+            }
+        }
+
+        stage('Archive Reports') {
+            steps {
+                archiveArtifacts artifacts: 'reports/**/*.json', fingerprint: true
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Successfully built, scanned, pushed, and deployed!"
+            echo "Backend Image: ${BACKEND_TAG}"
+            echo "Frontend Image: ${FRONTEND_TAG}"
+            cleanWs()
+        }
+        failure {
+            echo "❌ Build failed! Check Jenkins console output for details."
+        }
+    }
+}
