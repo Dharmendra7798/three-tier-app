@@ -20,7 +20,7 @@ spec:
       - name: ecr-registry-secret
       containers:
       - name: frontend
-        image: 241913669350.dkr.ecr.ap-south-1.amazonaws.com/three-tier-frontend:frontend-8d686f6
+        image: 241913669350.dkr.ecr.ap-south-1.amazonaws.com/three-tier-frontend:frontend-bb019f9
         imagePullPolicy: Always
         ports:
         - containerPort: 80   # IMPORTANT!
