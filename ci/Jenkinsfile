@@ -45,25 +45,24 @@ pipeline {
             }
         }
 
-        stage('Trivy Scan Docker Images') {
+        stage('Install & Run Trivy Scan') {
             steps {
                 sh """
-                    echo '📌 Installing Trivy...'
+                    echo "🔥 Installing Trivy (universal .deb method)..."
+                    
                     apt-get update -y
-                    apt-get install wget apt-transport-https gnupg lsb-release -y
+                    apt-get install wget -y
 
-                    wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | apt-key add -
+                    # Download latest Trivy .deb package
+                    wget -q https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.54.2_Linux-64bit.deb
 
-                    echo "deb https://aquasecurity.github.io/trivy-repo/deb \$(lsb_release -sc) main" \
-                        | tee /etc/apt/sources.list.d/trivy.list
+                    # Install Trivy
+                    dpkg -i trivy_0.54.2_Linux-64bit.deb || apt-get install -f -y
 
-                    apt-get update -y
-                    apt-get install trivy -y
-
-                    echo '🔍 Scanning Backend Image...'
+                    echo "🔍 Scanning Backend Image..."
                     trivy image --severity HIGH,CRITICAL --no-progress ${ECR_BACKEND_URI}:${BACKEND_TAG} || true
 
-                    echo '🔍 Scanning Frontend Image...'
+                    echo "🔍 Scanning Frontend Image..."
                     trivy image --severity HIGH,CRITICAL --no-progress ${ECR_FRONTEND_URI}:${FRONTEND_TAG} || true
                 """
             }
@@ -123,3 +122,4 @@ pipeline {
         }
     }
 }
+
