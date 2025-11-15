@@ -48,22 +48,18 @@ pipeline {
         stage('Install & Run Trivy Scan') {
             steps {
                 sh """
-                    echo "🔥 Updating apt sources..."
+                    echo "🔥 Installing Trivy using official installer script..."
+
                     apt-get update -y
+                    apt-get install -y wget curl
 
-                    echo "🔥 Installing APT Dependencies..."
-                    apt-get install -y wget apt-transport-https gnupg
+                    # Official Trivy Install Script
+                    curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
-                    echo "🔥 Downloading Trivy .deb..."
-                    wget -q https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.54.2_Linux-64bit.deb
-
-                    echo "🔥 Installing Trivy..."
-                    dpkg -i trivy_0.54.2_Linux-64bit.deb || apt-get install -f -y
-
-                    echo "🔍 Running Trivy Scan on Backend image..."
+                    echo "🔍 Running Trivy Scan for Backend..."
                     trivy image --no-progress --severity HIGH,CRITICAL ${ECR_BACKEND_URI}:${BACKEND_TAG} || true
 
-                    echo "🔍 Running Trivy Scan on Frontend image..."
+                    echo "🔍 Running Trivy Scan for Frontend..."
                     trivy image --no-progress --severity HIGH,CRITICAL ${ECR_FRONTEND_URI}:${FRONTEND_TAG} || true
                 """
             }
@@ -114,11 +110,7 @@ pipeline {
     }
 
     post {
-        success {
-            echo "🎉 Pipeline Successful!"
-        }
-        failure {
-            echo "❌ Pipeline Failed — check logs."
-        }
+        success { echo "🎉 Pipeline Successful!" }
+        failure { echo "❌ Pipeline Failed — check logs." }
     }
 }
