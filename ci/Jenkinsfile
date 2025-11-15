@@ -48,23 +48,22 @@ pipeline {
         stage('Install & Run Trivy Scan') {
             steps {
                 sh """
-                    echo "🔥 Removing any old Trivy repo if exists..."
-                    rm -f /etc/apt/sources.list.d/trivy.list || true
-
-                    echo "🔥 Updating system..."
+                    echo "🔥 Updating apt sources..."
                     apt-get update -y
+
+                    echo "🔥 Installing APT Dependencies..."
                     apt-get install -y wget apt-transport-https gnupg
 
-                    echo "🔥 Downloading Trivy .deb package..."
+                    echo "🔥 Downloading Trivy .deb..."
                     wget -q https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.54.2_Linux-64bit.deb
 
                     echo "🔥 Installing Trivy..."
                     dpkg -i trivy_0.54.2_Linux-64bit.deb || apt-get install -f -y
 
-                    echo "🔍 Scanning Backend Image..."
+                    echo "🔍 Running Trivy Scan on Backend image..."
                     trivy image --no-progress --severity HIGH,CRITICAL ${ECR_BACKEND_URI}:${BACKEND_TAG} || true
 
-                    echo "🔍 Scanning Frontend Image..."
+                    echo "🔍 Running Trivy Scan on Frontend image..."
                     trivy image --no-progress --severity HIGH,CRITICAL ${ECR_FRONTEND_URI}:${FRONTEND_TAG} || true
                 """
             }
@@ -93,7 +92,6 @@ pipeline {
         stage('Update K8s Manifests for ArgoCD') {
             steps {
                 withCredentials([string(credentialsId: GIT_CREDENTIAL_ID, variable: 'GIT_TOKEN')]) {
-
                     sh """
                         rm -rf repo
                         git clone https://${GIT_TOKEN}@github.com/Dharmendra7798/three-tier-app.git repo
