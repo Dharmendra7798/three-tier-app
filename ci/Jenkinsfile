@@ -14,7 +14,7 @@ pipeline {
         GIT_REPO    = "https://github.com/Dharmendra7798/three-tier-app.git"
         GIT_BRANCH  = "main"
 
-        GIT_CREDENTIAL_ID = "github-credentials"
+        GIT_CREDENTIAL_ID = "github-cred"
         AWS_CREDENTIAL_ID = "aws-credentials"
     }
 
