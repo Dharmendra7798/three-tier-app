@@ -1,0 +1,126 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION        = "ap-south-1"
+        AWS_ACCOUNT_ID    = "241913669350"
+
+        ECR_BACKEND_REPO  = "three-tier-backend"
+        ECR_FRONTEND_REPO = "three-tier-frontend"
+
+        ECR_BACKEND_URI   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_BACKEND_REPO}"
+        ECR_FRONTEND_URI  = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_FRONTEND_REPO}"
+
+        GIT_REPO    = "https://github.com/Dharmendra7798/three-tier-app.git"
+        GIT_BRANCH  = "main"
+
+        GIT_CREDENTIAL_ID = "github-cred"
+        AWS_CREDENTIAL_ID = "aws-credentials"
+    }
+
+    stages {
+
+        stage('Checkout Code') {
+            steps {
+                git(url: "${GIT_REPO}", branch: "${GIT_BRANCH}")
+            }
+        }
+
+        stage('Build Docker Images') {
+            steps {
+                script {
+                    GIT_COMMIT = sh(returnStdout: true, script: "git rev-parse --short HEAD").trim()
+
+                    env.BACKEND_TAG  = "backend-${GIT_COMMIT}"
+                    env.FRONTEND_TAG = "frontend-${GIT_COMMIT}"
+
+                    sh """
+                        cd Application-Code/backend
+                        docker build -t ${ECR_BACKEND_URI}:${BACKEND_TAG} .
+
+                        cd ../../Application-Code/frontend
+                        docker build -t ${ECR_FRONTEND_URI}:${FRONTEND_TAG} .
+                    """
+                }
+            }
+        }
+
+        /* ---------------------------------------------------------
+           📌 NEW TRIVY IMAGE SCAN STAGE (Added Before ECR Push)
+           --------------------------------------------------------- */
+        stage('Trivy Scan Docker Images') {
+            steps {
+                sh """
+                    echo '📌 Installing Trivy...'
+                    apt-get update -y
+                    apt-get install wget apt-transport-https gnupg lsb-release -y
+
+                    wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | apt-key add -
+                    echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | tee /etc/apt/sources.list.d/trivy.list
+                    apt-get update -y
+                    apt-get install trivy -y
+
+                    echo '🔍 Scanning Backend Image...'
+                    trivy image --severity HIGH,CRITICAL --no-progress ${ECR_BACKEND_URI}:${BACKEND_TAG} || true
+
+                    echo '🔍 Scanning Frontend Image...'
+                    trivy image --severity HIGH,CRITICAL --no-progress ${ECR_FRONTEND_URI}:${FRONTEND_TAG} || true
+                """
+            }
+        }
+        /* ------------------------------------------------------- */
+
+        stage('AWS ECR Login') {
+            steps {
+                withAWS(region: "${AWS_REGION}", credentials: "${AWS_CREDENTIAL_ID}") {
+                    sh """
+                        aws ecr get-login-password --region ${AWS_REGION} |
+                        docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                    """
+                }
+            }
+        }
+
+        stage('Push Images to ECR') {
+            steps {
+                sh """
+                    docker push ${ECR_BACKEND_URI}:${BACKEND_TAG}
+                    docker push ${ECR_FRONTEND_URI}:${FRONTEND_TAG}
+                """
+            }
+        }
+
+        stage('Update K8s Manifests for ArgoCD') {
+            steps {
+                withCredentials([string(credentialsId: GIT_CREDENTIAL_ID, variable: 'GIT_TOKEN')]) {
+
+                    sh """
+                        rm -rf repo
+                        git clone https://${GIT_TOKEN}@github.com/Dharmendra7798/three-tier-app.git repo
+
+                        cd repo/Kubernetes-Manifests-file
+
+                        sed -i "s|image: .*three-tier-backend.*|image: ${ECR_BACKEND_URI}:${BACKEND_TAG}|g" Backend/deployment.yaml
+                        sed -i "s|image: .*three-tier-frontend.*|image: ${ECR_FRONTEND_URI}:${FRONTEND_TAG}|g" Frontend/deployment.yaml
+
+                        git config user.email "jenkins@ci.local"
+                        git config user.name "Jenkins CI"
+
+                        git add .
+                        git commit -m "GitOps Update: ${BACKEND_TAG}, ${FRONTEND_TAG}" || true
+                        git push origin main
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "🎉 Pipeline Successful!"
+        }
+        failure {
+            echo "❌ Pipeline Failed — check logs."
+        }
+    }
+}
