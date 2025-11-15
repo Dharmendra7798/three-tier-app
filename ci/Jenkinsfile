@@ -48,22 +48,24 @@ pipeline {
         stage('Install & Run Trivy Scan') {
             steps {
                 sh """
-                    echo "🔥 Installing Trivy (universal .deb method)..."
-                    
-                    apt-get update -y
-                    apt-get install wget -y
+                    echo "🔥 Removing any old Trivy repo if exists..."
+                    rm -f /etc/apt/sources.list.d/trivy.list || true
 
-                    # Download latest Trivy .deb package
+                    echo "🔥 Updating system..."
+                    apt-get update -y
+                    apt-get install -y wget apt-transport-https gnupg
+
+                    echo "🔥 Downloading Trivy .deb package..."
                     wget -q https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.54.2_Linux-64bit.deb
 
-                    # Install Trivy
+                    echo "🔥 Installing Trivy..."
                     dpkg -i trivy_0.54.2_Linux-64bit.deb || apt-get install -f -y
 
                     echo "🔍 Scanning Backend Image..."
-                    trivy image --severity HIGH,CRITICAL --no-progress ${ECR_BACKEND_URI}:${BACKEND_TAG} || true
+                    trivy image --no-progress --severity HIGH,CRITICAL ${ECR_BACKEND_URI}:${BACKEND_TAG} || true
 
                     echo "🔍 Scanning Frontend Image..."
-                    trivy image --severity HIGH,CRITICAL --no-progress ${ECR_FRONTEND_URI}:${FRONTEND_TAG} || true
+                    trivy image --no-progress --severity HIGH,CRITICAL ${ECR_FRONTEND_URI}:${FRONTEND_TAG} || true
                 """
             }
         }
@@ -122,4 +124,3 @@ pipeline {
         }
     }
 }
-
