@@ -45,9 +45,6 @@ pipeline {
             }
         }
 
-        /* ---------------------------------------------------------
-           📌 NEW TRIVY IMAGE SCAN STAGE (Added Before ECR Push)
-           --------------------------------------------------------- */
         stage('Trivy Scan Docker Images') {
             steps {
                 sh """
@@ -56,7 +53,10 @@ pipeline {
                     apt-get install wget apt-transport-https gnupg lsb-release -y
 
                     wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | apt-key add -
-                    echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | tee /etc/apt/sources.list.d/trivy.list
+
+                    echo "deb https://aquasecurity.github.io/trivy-repo/deb \$(lsb_release -sc) main" \
+                        | tee /etc/apt/sources.list.d/trivy.list
+
                     apt-get update -y
                     apt-get install trivy -y
 
@@ -68,7 +68,6 @@ pipeline {
                 """
             }
         }
-        /* ------------------------------------------------------- */
 
         stage('AWS ECR Login') {
             steps {
